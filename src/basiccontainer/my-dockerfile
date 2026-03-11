@@ -1,0 +1,20 @@
+# Use Ubuntu as the base image
+FROM ubuntu:22.04
+
+# Avoid interactive prompts during package installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update packages and install bash (usually already present, but ensured here)
+RUN apt-get update && apt-get install -y bash && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy the bash script into the container
+COPY script.sh /app/script.sh
+
+# Make the script executable
+RUN chmod +x /app/script.sh
+
+# Run the script when the container starts
+CMD ["/bin/bash", "/app/script.sh"]
