@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+
+  web:
+    build: .
+    container_name: hello-nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - counter
+    restart: unless-stopped
+
+  counter:
+    build: ./counter
+    container_name: hit-counter
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
