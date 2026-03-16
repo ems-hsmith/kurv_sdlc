@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+
+  web:
+    build:
+      context: ./nginx
+      args:
+        API_URL: http://localhost:3000   # this is the value of the url for the deployment, it can be overridden at build time
+    image: nginx:alpine
+    container_name: hello-nginx
+    ports:
+      - "8080:80"
+ #   volumes:
+ #     - ./nginx:/usr/share/nginx/html:ro
+    depends_on:
+      - counter
+    restart: unless-stopped
+
+  counter:
+    build: ./counter
+    container_name: hits-counter
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

@@ -1,0 +1,23 @@
+# Use the official nginx image
+FROM nginx:alpine
+
+# Build argument for API URL
+ARG API_URL
+
+# Remove default nginx static files
+RUN rm -rf /usr/share/nginx/html/*
+
+# Copy website files into nginx directory
+COPY index.html /usr/share/nginx/html/
+COPY styles.css /usr/share/nginx/html/
+
+# Replace placeholder in index.html
+RUN if [ -n "$API_URL" ]; then \
+      sed -i "s|__API_URL__|$API_URL|g" /usr/share/nginx/html/index.html; \
+    fi
+
+# Expose port 80
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
