@@ -1,0 +1,59 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - '# Use the AWS CLI to get a login password and pass it to Docker'
+      - >-
+        aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login
+        --username AWS --password-stdin
+        $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - '# Ensure IMAGE_REPO_NAME is set; if not, default it here or in Project Env Vars'
+      - echo "Using Account ID $AWS_ACCOUNT_ID and Repo $IMAGE_REPO_NAME"
+      - '# Define the full URI for your repository'
+      - >-
+        REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - >-
+        REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - echo "Using Repository $REPOSITORY_URI"
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker images...
+      - '# Frontend'
+      - ls -R
+      - BACKEND_URL=$(cat $CODEBUILD_SRC_DIR_BackendUrlArtifact/backend_url.txt)
+      - echo "BACKEND_URL = ${BACKEND_URL}"
+      - >-
+        docker build --build-arg "API_URL=https://${BACKEND_URL}" -t
+        $REPOSITORY_URI:latest ./src/basicapp/nginx
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - '# Frontend'
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo Deploying App Runner stack...
+      - echo "PROJECT_NAME = ${PROJECT_NAME}"
+      - echo "REPOSITORY_URI = ${REPOSITORY_URI}"
+      - >-
+        aws cloudformation deploy --template-file
+        infra/app-runner-stack-frontend.yaml --stack-name
+        "${PROJECT_NAME}-app-runner-frontend" --parameter-overrides
+        ProjectName="${PROJECT_NAME}"
+        FrontendECRUri="${REPOSITORY_URI}:${IMAGE_TAG}" --capabilities
+        CAPABILITY_NAMED_IAM
+      - >-
+        SERVICE_ARN=$(aws cloudformation describe-stacks --stack-name
+        "${PROJECT_NAME}-app-runner-frontend" --query
+        "Stacks[0].Outputs[?OutputKey=='AppRunnerServiceArn'].OutputValue"
+        --output text)
+      - aws apprunner start-deployment --service-arn $SERVICE_ARN
+artifacts:
+  files:
+    - imagedefinitions.json

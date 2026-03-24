@@ -1,12 +1,33 @@
-FROM node:20-alpine
+# Stage 1: Build & Test
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json .
+# Copy package files and install all dependencies (including dev)
+COPY package*.json ./
 RUN npm install
 
+# Copy source code and tests
 COPY server.js .
+COPY server.test.js .
 
+# Run unit tests
+RUN npm test
+
+# Stage 2: Production Runtime
+FROM public.ecr.aws/docker/library/node:20-alpine AS runtime
+
+WORKDIR /app
+
+# Copy only production dependencies
+COPY package*.json ./
+RUN npm install --only=production
+
+# Copy source code from builder (already tested)
+COPY --from=builder /app/server.js .
+
+# Expose port
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Start the API
+CMD ["npm", "start"]

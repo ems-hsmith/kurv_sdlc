@@ -1,0 +1,44 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - # Use the AWS CLI to get a login password and pass it to Docker
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - # Ensure IMAGE_REPO_NAME is set; if not, default it here or in Project Env Vars
+      - echo "Using Account ID $AWS_ACCOUNT_ID and Repo $IMAGE_REPO_NAME"
+      - # Define the full URI for your repository
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - REPOSITORY_URI_API=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/kurv-my-app-backend-repo-ds
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - echo "Using Repository $REPOSITORY_URI"
+
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - # Build the image and tag it as 'latest' and with the commit hash
+      - docker build -t $REPOSITORY_URI:latest --build-arg "API_URL=https://nn5mhjzprv.us-east-1.awsapprunner.com" ./src/basicapp/nginx
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+      - docker build -t $REPOSITORY_URI_API:latest ./src/basicapp/counter
+      - docker tag $REPOSITORY_URI_API:latest $REPOSITORY_URI_API:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - # Push both tags to ECR
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI_API:latest
+      - docker push $REPOSITORY_URI_API:$IMAGE_TAG
+      - echo Writing image definitions file...
+      - # (Optional) Useful for other AWS services, but good practice
+      - printf '[{"name":"%s","imageUri":"%s"}]' $IMAGE_REPO_NAME $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json

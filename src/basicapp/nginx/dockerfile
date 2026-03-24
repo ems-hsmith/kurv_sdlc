@@ -1,5 +1,5 @@
 # Use the official nginx image
-FROM nginx:alpine
+FROM  public.ecr.aws/docker/library/nginx:alpine
 
 # Build argument for API URL
 ARG API_URL

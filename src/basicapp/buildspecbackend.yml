@@ -1,0 +1,62 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - '# Use the AWS CLI to get a login password and pass it to Docker'
+      - >-
+        aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login
+        --username AWS --password-stdin
+        $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - '# Ensure IMAGE_REPO_NAME is set; if not, default it here or in Project Env Vars'
+      - echo "Using Account ID $AWS_ACCOUNT_ID and Repo $IMAGE_REPO_NAME"
+      - '# Define the full URI for your repository'
+      - >-
+        REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - >-
+        REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - echo "Using Repository $REPOSITORY_URI"
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker images...
+      - '# Backend'
+      - docker build -t $REPOSITORY_URI_API:latest ./src/basicapp/counter
+      - docker tag $REPOSITORY_URI_API:latest $REPOSITORY_URI_API:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - '# Backend'
+      - docker push $REPOSITORY_URI_API:latest
+      - docker push $REPOSITORY_URI_API:$IMAGE_TAG
+      - echo Deploying App Runner stack...
+      - echo "PROJECT_NAME = ${PROJECT_NAME}"
+      - echo "REPOSITORY_URI = ${REPOSITORY_URI}"
+      - echo "REPOSITORY_URI_API = ${REPOSITORY_URI_API}"
+      - >-
+        aws cloudformation deploy --template-file
+        infra/app-runner-stack-backend.yaml --stack-name
+        "${PROJECT_NAME}-app-runner-backend" --parameter-overrides
+        ProjectName="${PROJECT_NAME}"
+        BackendECRUri="${REPOSITORY_URI_API}:${IMAGE_TAG}" --capabilities
+        CAPABILITY_NAMED_IAM
+      - >-
+        aws cloudformation describe-stacks --stack-name
+        "${PROJECT_NAME}-app-runner-backend" --query
+        "Stacks[0].Outputs[?OutputKey=='BackendAppRunnerUrl'].OutputValue"
+        --output text > backend_url.txt
+      - ls -R
+      - >-
+        SERVICE_ARN=$(aws cloudformation describe-stacks --stack-name
+        "${PROJECT_NAME}-app-runner-backend" --query
+        "Stacks[0].Outputs[?OutputKey=='BackendAppRunnerServiceArn'].OutputValue"
+        --output text)
+      - aws apprunner start-deployment --service-arn $SERVICE_ARN
+artifacts:
+  files:
+    - imagedefinitions.json
+    - backend_url.txt

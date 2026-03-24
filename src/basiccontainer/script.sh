@@ -1,26 +1,25 @@
 #!/bin/bash
 
-# Function to handle Ctrl+C
+echo "Hello from the Docker container!"
+echo "Current date:"
+date
+
+# Function to run when Ctrl+C is pressed
 cleanup() {
   echo ""
-  echo "Ctrl+C detected. Gracefully shutting down..."
-  echo "Cleaning up resources..."
+  echo "Ctrl+C detected. Cleaning up and exiting gracefully..."
   exit 0
 }
 
 # Trap SIGINT (Ctrl+C)
-trap cleanup SIGINT
-
-echo "Hello from inside the Docker container!"
-echo "Current date:"
-date
+trap cleanup SIGINT SIGTERM
 
 echo "Starting loop..."
 
-for ((i=1; i<=10000; i++))
+for i in $(seq 1 10000)
 do
   echo "Loop iteration: $i"
   sleep 1
 done
 
-echo "Loop finished."
+echo "Loop finished!"
