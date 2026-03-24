@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys the App Runner services.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name for the project and resources convention of client-appname.
+  FrontendECRUri:
+    Type: String
+    Description: The URI of the frontend ECR repository.
+
+Resources:
+
+  # 4. App Runner IAM Access Role (Allows App Runner to pull from ECR)
+  AppRunnerECRAccessRoleFrontend:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-AppRunner-Role-Frontend"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  # 5. App Runner Service
+  AppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: !Sub "${ProjectName}-FrontendSrvc"
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerECRAccessRoleFrontend.Arn
+        AutoDeploymentsEnabled: false
+        ImageRepository:
+          ImageIdentifier: !Ref FrontendECRUri
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: "80" # Change to your app's port
+
+Outputs:
+  AppRunnerUrl:
+    Value: !GetAtt AppRunnerService.ServiceUrl
+  AppRunnerServiceArn:
+    Value: !GetAtt AppRunnerService.ServiceArn

@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates ECR repositories and a CodeBuild project.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name for the project and resources convention of client-appname.
+    AllowedPattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+    ConstraintDescription: Project name must be lowercase alphanumeric characters and can include single hyphens in the form of client-appname.
+  GitHubRepo:
+    Type: String
+    Description: URL of the GitHub repository (e.g., https://github.com/user/repo.git).
+    AllowedPattern: '^https?://github\.com/[\w.-]+/[\w.-]+(?:\.git)?$'
+    ConstraintDescription: Must be a valid GitHub repository URL (e.g., https://github.com/username/repository).
+
+Resources:
+  # 1. Container Registry (ECR)
+  ContainerRepositoryFrontend:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-frontend-repo"
+
+  ContainerRepositoryBackend:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-backend-repo"
+
+  # 2. IAM Role for CodeBuild
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-CodeBuild-Role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-CodeBuildECRPushPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ECRAuthToken # This action MUST be Resource: *
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource: !Sub "arn:aws:s3:::codepipeline-artifacts-${AWS::AccountId}-${AWS::Region}/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::codepipeline-artifacts-${AWS::AccountId}-${AWS::Region}/*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                # This dynamically builds the ARN for your specific account and region
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:*
+                  - apprunner:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  # 3. CodeBuild Projects
+  BuildProjectFrontend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-frontend"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true # Required to build Docker images
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ContainerRepositoryFrontend}"
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub "${ProjectName}-frontend-repo"
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub "${AWS::AccountId}"
+          - Name: REPOSITORY_URI_API
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ContainerRepositoryBackend}"
+          - Name: PROJECT_NAME
+            Value: !Ref ProjectName
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepo
+        BuildSpec: src/basicapp/buildspecfrontend.yml
+
+  BuildProjectBackend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-backend"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true # Required to build Docker images
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI_API
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ContainerRepositoryBackend}"
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub "${AWS::AccountId}"
+          - Name: PROJECT_NAME
+            Value: !Ref ProjectName
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepo
+        BuildSpec: src/basicapp/buildspecbackend.yml
+
+
+Outputs:
+  FrontendECRUri:
+    Value: !GetAtt ContainerRepositoryFrontend.RepositoryUri
+  BackendECRUri:
+    Value: !GetAtt ContainerRepositoryBackend.RepositoryUri

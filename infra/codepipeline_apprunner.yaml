@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  AWS CodePipeline for building and deploying the App Runner application.
+Parameters:
+  PipelineName:
+    Type: String
+    Description: The name of the CodePipeline.
+  GitHubRepo:
+    Type: String
+    Description: The GitHub repository name (e.g., your-username/your-repo).
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: The branch to use from the GitHub repository.
+  GitHubConnectionArn:
+    Type: String
+    Description: The ARN of the AWS CodeStar connection to GitHub.
+  ProjectName:
+    Type: String
+    Description: The project name for the App Runner stack.
+  GitHubRepoURL:
+    Type: String
+    Description: The full URL of the GitHub repository for the App Runner stack.
+
+Resources:
+  CodePipelineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - cloudformation.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:GetBucketVersioning'
+                  - 's3:PutObject'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'codestar-connections:UseConnection'
+                Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:*'
+                  - 'iam:PassRole'
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:CreateProject'
+                  - 'codebuild:DeleteProject'
+                  - 'codebuild:UpdateProject'
+                  - 'codebuild:CreateWebhook'
+                  - 'codebuild:DeleteWebhook'
+                  - 'codebuild:UpdateWebhook'
+                  - 'codebuild:BatchGetProjects'
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StopBuild'
+                  - 'codebuild:RetryBuild'
+                  - 'apprunner:*'
+                  - 'ecr:CreateRepository'
+                  - 'ecr:DeleteRepository'
+                  - 'ecr:DescribeRepositories'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'iam:GetRole'
+                  - 'iam:CreateRole'
+                  - 'iam:DeleteRole'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:PutRolePolicy'
+                  - 'iam:DeleteRolePolicy'
+                  - 'iam:ListRolePolicies'
+                  - 'iam:CreatePolicy'
+                  - 'iam:DeletePolicy'
+                  - 'iam:GetRolePolicy'
+                  - 'iam:ListAttachedRolePolicies'
+                Resource: '*'
+
+  ArtifactBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'codepipeline-artifacts-${AWS::AccountId}-${AWS::Region}'
+
+  CodePipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        - Name: DeployBuildInfrastructure
+          Actions:
+            - Name: DeployStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${ProjectName}-build-infra'
+                TemplatePath: 'SourceArtifact::infra/codebuild-ecr-stack.yaml'
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "ProjectName": "${ProjectName}",
+                    "GitHubRepo": "${GitHubRepoURL}"
+                  }
+              InputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 2
+        - Name: BuildAndDeployBackend
+          Actions:
+            - Name: BuildBackend
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Sub "${ProjectName}-backend"
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BackendUrlArtifact
+              RunOrder: 1
+        - Name: BuildAndDeployFrontend
+          Actions:
+            - Name: BuildFrontend
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Sub "${ProjectName}-frontend"
+                PrimarySource: "SourceArtifact"
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BackendUrlArtifact
+              RunOrder: 1
